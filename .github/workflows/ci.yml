@@ -389,7 +389,7 @@ jobs:
           version: latest
 
       - name: Configure local Kind cluster access
-        shell: pwsh
+        shell: powershell
         run: |
           $kubeconfig = Join-Path $env:USERPROFILE ".kube\kind-mini-project.yaml"
           if (-not (Test-Path $kubeconfig)) {
@@ -399,7 +399,7 @@ jobs:
         
 
       - name: Verify local cluster access
-        shell: pwsh
+        shell: powershell
         run: |
           $context = kubectl config current-context
           if ($context -ne "kind-saldes-local") {
@@ -409,7 +409,7 @@ jobs:
           kubectl get deployment saldes-churn --namespace $env:K8S_NAMESPACE
 
       - name: Deploy application
-        shell: pwsh
+        shell: powershell
         run: |
           $imageName = "ghcr.io/$($env:GITHUB_REPOSITORY.ToLower())/churn-api"
           $image = "${imageName}:$($env:GITHUB_SHA)"
@@ -425,7 +425,7 @@ jobs:
           kubectl apply --namespace $env:K8S_NAMESPACE -f k8s/service.yaml
 
       - name: Verify deployment rollout
-        shell: pwsh
+        shell: powershell
         run: |
           kubectl rollout status deployment/saldes-churn --namespace $env:K8S_NAMESPACE --timeout=180s
           kubectl get pods,svc --namespace $env:K8S_NAMESPACE
