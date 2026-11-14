@@ -1,4 +1,4 @@
-# CI/CD - Pipeline
+# MLOps CI/CD - Pipeline
 
 This repository contains the MLOps pipeline for predicting [customer churn for Saldes Mobil AB](https://github.com/saldes-education/saldes-mobil-churn).
 It includes data validation, model training, and an automated CI/CD pipeline.
@@ -9,8 +9,8 @@ This project uses `uv` for lightning-fast dependency management. To set up your 
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/LAjoyan/ci-cd-pipeline.git
-   cd ci-cd-pipeline
+   git clone https://github.com/LAjoyan/mlops-ci-cd-pipeline.git
+   cd mlops-ci-cd-pipeline
    ```
 2. Sync the environment and install all dependencies (including dev, data and MLflow tracking tools):
    ```bash
@@ -19,7 +19,7 @@ This project uses `uv` for lightning-fast dependency management. To set up your 
 3. Run your tests or scripts directly using `uv run`:
 
 ```bash
-#Example run command
+# Example run command
 uv run pytest
 
 uv run python -m churn.model
@@ -497,14 +497,71 @@ GitHub Actions includes a dedicated Kubernetes manifest validation job using Kub
 
 Changes to files in `k8s/` trigger manifest validation independently of the application testing and model training pipeline.
 
-### GitHub Actions Deployment and Production Approval
+### Automated Deployment to Local Kind Cluster
 
-The CI/CD workflow includes a deployment job for the course Kubernetes cluster.
+The project includes an automated Kubernetes deployment workflow using GitHub Actions and a local Kind cluster.
+
+The deployment runs through a Windows self-hosted GitHub Actions runner connected to the local Kubernetes environment.
+
+**Deployment architecture:**
+
+- **GitHub repository:** `LAjoyan/mlops-ci-cd-pipeline`
+- **CI/CD platform:** GitHub Actions
+- **Container registry:** GitHub Container Registry (GHCR)
+- **Container image:** `ghcr.io/lajoyan/mlops-ci-cd-pipeline/churn-api`
+- **Image tagging:** Git commit SHA and `latest`
+- **Kubernetes distribution:** Kind
+- **Cluster name:** `saldes-local`
+- **Kubernetes version:** `v1.37.0`
+- **Runner:** Windows self-hosted GitHub Actions runner
+- **Namespace:** `default`
+
+**Automated deployment workflow:**
+
+1. A push to `main` or a manual workflow trigger starts the pipeline.
+2. GitHub Actions runs code quality checks, automated tests and data validation.
+3. The model is trained, evaluated and checked against the approved baseline.
+4. The approved model is packaged into a Docker image.
+5. The Docker image is published to GHCR with the current Git commit SHA and `latest` tags.
+6. The deployment job waits for approval through the GitHub Environment `production`.
+7. After approval, the Windows self-hosted runner connects to the local Kind cluster using its kubeconfig.
+8. The Kubernetes Deployment and Service manifests are applied.
+9. GitHub Actions verifies the Kubernetes rollout and running Pods.
+
+**Production approval:**
+
+The deployment job uses the GitHub Environment `production`, configured with a required reviewer. The approval gate was successfully tested: GitHub Actions paused the deployment until approval was granted, then resumed and completed the Kubernetes deployment successfully.
+
+**Deployment verification:**
+
+The deployment was successfully verified:
+
+- Deployment availability: `1/1`
+- Pod status: `Running`
+- Pod restarts: `0`
+- Kubernetes Service: `ClusterIP`, port `8000`
+- FastAPI health endpoint: `GET /health`
+- Health response:
+
+```json
+{
+  "status": "ok",
+  "model_loaded": true
+}
+```
+
+**Deployed image example:**
+
+The running Kubernetes Deployment uses an image tagged with the exact Git commit SHA that produced it. This provides traceability between the source code, Docker image and deployed application.
+
+### Historical Course Cluster Deployment
+
+This section documents the previous automated deployment to the shared course Kubernetes cluster. It is retained as a record of the original course deployment and is no longer the active deployment configuration.
 
 **Deployment conditions:**
 
 - Deployment is restricted to the `main` branch.
-- The workflow must run in the personal repository `LAjoyan/ci-cd-pipeline`.
+- The historical deployment workflow was restricted to the repository `LAjoyan/ci-cd-pipeline`.
 - The Docker image must be built and published successfully before deployment.
 - Kubernetes manifest validation must pass or be skipped when no Kubernetes files have changed.
 - The deployment can be triggered by a push to `main` or manually using `workflow_dispatch`.
@@ -518,17 +575,11 @@ The CI/CD workflow includes a deployment job for the course Kubernetes cluster.
 5. GitHub Actions waits for the Kubernetes rollout to complete.
 6. The workflow checks the deployed Pods and Services.
 
-**Production approval:**
+**Historical production approval:**
 
-The deployment job uses the GitHub Environment `production`.
+The previous course-cluster deployment also used the GitHub Environment `production` with a required reviewer.
 
-A required reviewer must approve the deployment before the job can continue. This provides a manual approval gate between successful CI checks and deployment to the course cluster.
-
-The kubeconfig is stored as an environment secret and is not committed to the repository.
-
-After approval, GitHub Actions continues with the deployment and verifies the rollout.
-
-### 🚀 Docker Optimization & Resource Management (VG)
+### 🚀 Docker Optimization & Resource Management
 To improve operational reliability, container security, and CI resource utilization, the container deployment pipeline was upgraded:
 - **Multi-Stage Build:** Uses a `builder` stage for dependencies and creates a minimal `runtime` container without build tools (`/bin/uv`) or temporary caches.
 - **Optimized Production Environment:** Installs only production dependencies (`--frozen --no-dev --no-install-project`) and strips `__pycache__` and test directories from `.venv`.
@@ -543,7 +594,7 @@ To improve operational reliability, container security, and CI resource utilizat
 | **Image Cleanliness** | Included build tools (`uv`) & caches | Stripped `.venv`, runtime-only | Minimal attack surface |
 | **Security** | Root user, no healthcheck | `appuser` (non-root) + container `HEALTHCHECK` | Least privilege, orchestration-ready |
 
-## 🛡️ Statistical Data Drift & Safe Data Delivery (VG)
+## 🛡️ Statistical Data Drift & Safe Data Delivery
 
 To protect the model from retraining on skewed or incomplete data deliveries that still pass static Pandera schema rules, `src/churn/drift.py` compares incoming deliveries against `data/kundbas.csv`:
 - **Volume Sanity Check:** Fails if row count drops below 50% of the reference dataset.
@@ -555,7 +606,7 @@ To protect the model from retraining on skewed or incomplete data deliveries tha
 ## 📁 Project Structure
 
 ```text
-ci-cd-pipeline/
+mlops-ci-cd-pipeline/
 ├── .github/
 │   ├── actions/
 │   │   └── setup-project/
@@ -661,10 +712,10 @@ ci-cd-pipeline/
 
 ### 6. Documentation & Final Verification
 
-- [ ] Update README to reflect the completed pipeline
-- [ ] Capture a successful end-to-end pipeline run
-- [ ] Capture a run where invalid data stops validation
-- [ ] Prepare final repository, commit and PR/review links for submission
+- [x] Update README to reflect the completed pipeline
+- [x] Capture a successful end-to-end pipeline run
+- [x] Capture a run where invalid data stops validation
+- [x] Prepare final repository, commit and PR/review links for submission
 
 ## 👥 Collaborators
 
