@@ -362,22 +362,22 @@ jobs:
             ${{ steps.docker_image.outputs.name }}:latest
 
   deploy:
-    name: Deploy to Course Kubernetes Cluster
+    name: Deploy to Local Kind Cluster
     needs: [package, validate-k8s]
     if: >-
       !cancelled() &&
-      github.repository == 'LAjoyan/ci-cd-pipeline' &&
+      github.repository == 'LAjoyan/mlops-ci-cd-pipeline' &&
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       needs.package.result == 'success' &&
       (needs.validate-k8s.result == 'success' || needs.validate-k8s.result == 'skipped')
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Windows, X64]
     environment:
       name: production
     permissions:
       contents: read
     env:
-      K8S_NAMESPACE: lilit-ajoyan
+      K8S_NAMESPACE: default
 
     steps:
       - name: Checkout repository
@@ -388,66 +388,47 @@ jobs:
         with:
           version: latest
 
-      - name: Configure course cluster access
-        env:
-          COURSE_KUBECONFIG: ${{ secrets.COURSE_KUBECONFIG }}
+      - name: Configure local Kind cluster access
+        shell: pwsh
         run: |
-          set -euo pipefail
+          $kubeconfig = Join-Path $env:USERPROFILE ".kube\kind-mini-project.yaml"
+          if (-not (Test-Path $kubeconfig)) {
+            throw "Kind kubeconfig not found: $kubeconfig"
+          }
+          "KUBECONFIG=$kubeconfig" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+        
 
-          if [ -z "$COURSE_KUBECONFIG" ]; then
-            echo "::error::COURSE_KUBECONFIG secret is missing"
-            exit 1
-          fi
-
-          KUBECONFIG_PATH="$RUNNER_TEMP/course-kubeconfig"
-          printf '%s' "$COURSE_KUBECONFIG" > "$KUBECONFIG_PATH"
-          chmod 600 "$KUBECONFIG_PATH"
-          echo "KUBECONFIG=$KUBECONFIG_PATH" >> "$GITHUB_ENV"
-
-      - name: Verify cluster access
+      - name: Verify local cluster access
+        shell: pwsh
         run: |
-          kubectl get deployment saldes-churn \
-            --namespace "$K8S_NAMESPACE"
+          $context = kubectl config current-context
+          if ($context -ne "kind-saldes-local") {
+            throw "Unexpected Kubernetes context: $context"
+          }
+          kubectl get nodes
+          kubectl get deployment saldes-churn --namespace $env:K8S_NAMESPACE
 
       - name: Deploy application
+        shell: pwsh
         run: |
-          set -euo pipefail
+          $imageName = "ghcr.io/$($env:GITHUB_REPOSITORY.ToLower())/churn-api"
+          $image = "${imageName}:$($env:GITHUB_SHA)"
+          $content = Get-Content "k8s/deployment.yaml" -Raw
 
-          IMAGE_NAME=$(echo "ghcr.io/${GITHUB_REPOSITORY}/churn-api" | tr '[:upper:]' '[:lower:]')
-          IMAGE="${IMAGE_NAME}:${GITHUB_SHA}"
+          $content = [regex]::Replace($content, '(?m)^([ \t]*image:).*$', "`$1 $image")
+          $content = [regex]::Replace($content, '(?m)^[ \t]*imagePullSecrets:\r?\n[ \t]*- name: ghcr-pull\r?\n', '')
 
-          echo "Deploying image: ${IMAGE}"
+          $deploymentPath = Join-Path $env:RUNNER_TEMP "deployment.yaml"
+          Set-Content -Path $deploymentPath -Value $content -Encoding utf8
 
-          IMAGE_COUNT=$(grep -Ec '^[[:space:]]*image:' k8s/deployment.yaml)
-          if [ "$IMAGE_COUNT" -ne 1 ]; then
-            echo "::error::Expected exactly one container image in deployment.yaml"
-            exit 1
-          fi
-
-          sed -E "s|^([[:space:]]*image:).*|\1 ${IMAGE}|" \
-            k8s/deployment.yaml > "$RUNNER_TEMP/deployment.yaml"
-
-          kubectl apply --namespace "$K8S_NAMESPACE" \
-            -f "$RUNNER_TEMP/deployment.yaml"
-
-          kubectl apply --namespace "$K8S_NAMESPACE" \
-            -f k8s/service.yaml
+          kubectl apply --namespace $env:K8S_NAMESPACE -f $deploymentPath
+          kubectl apply --namespace $env:K8S_NAMESPACE -f k8s/service.yaml
 
       - name: Verify deployment rollout
+        shell: pwsh
         run: |
-          set -euo pipefail
-
-          kubectl rollout status deployment/saldes-churn \
-            --namespace "$K8S_NAMESPACE" \
-            --timeout=180s
-
-          kubectl get pods,svc --namespace "$K8S_NAMESPACE"
-
-          echo "Deployment completed successfully."
-
-      - name: Remove temporary kubeconfig
-        if: always()
-        run: rm -f "$RUNNER_TEMP/course-kubeconfig"
+          kubectl rollout status deployment/saldes-churn --namespace $env:K8S_NAMESPACE --timeout=180s
+          kubectl get pods,svc --namespace $env:K8S_NAMESPACE
 
   ci-complete:
     name: CI Status Check
